@@ -1,3 +1,4 @@
+
 "use client";
 
 import type * as React from "react";
@@ -83,6 +84,8 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
       taskType: undefined, // Ensure taskType is initially undefined for placeholder
     },
   });
+
+  const selectedTaskType = form.watch("taskType"); // Watch the taskType field
 
   async function onSubmit(data: MaintenanceFormValues) {
     setIsSubmitting(true); // Disable button on submit
@@ -176,6 +179,12 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
                   </Command>
                 </PopoverContent>
               </Popover>
+              {/* Conditionally render description for "Other" task */}
+              {selectedTaskType === "Other" && (
+                <FormDescription className="mt-2">
+                  Please provide specific details about the task in the 'Notes' section below.
+                </FormDescription>
+              )}
               <FormMessage />
             </FormItem>
           )}
@@ -232,13 +241,19 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
           name="notes"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>Notes (Optional)</FormLabel>
+              <FormLabel>Notes {selectedTaskType === "Other" ? "" : "(Optional)"}</FormLabel>
               <FormControl>
                 <Textarea
-                  placeholder="Any specific details? e.g., Replaced brake pads, Tuned gears, Checked chain stretch..."
+                  placeholder={selectedTaskType === "Other" ? "Please specify the maintenance task performed..." : "Any specific details? e.g., Replaced brake pads, Tuned gears..."}
                   {...field}
                 />
               </FormControl>
+               {/* Add description specifically for 'Other' task notes */}
+               {selectedTaskType === "Other" && (
+                 <FormDescription>
+                   This field is important when selecting 'Other' task type.
+                 </FormDescription>
+               )}
               <FormMessage />
             </FormItem>
           )}
@@ -298,3 +313,4 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
     </Form>
   );
 }
+
