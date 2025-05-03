@@ -12,12 +12,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"; // Added CardDescription
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { format, differenceInDays, isFuture, isPast, isValid, formatDistanceToNowStrict } from "date-fns";
 import { Droplet, Gauge, Wrench, CircleCheck, Wind, Bike, AlertTriangle, CheckCircle2, CalendarClock, Trash2, Info } from "lucide-react";
-import { sendMaintenanceReminder } from "@/services/notification";
+import { sendMaintenanceReminder } from "@/services/notification"; // Assuming this remains unchanged for now
 import { useToast } from "@/hooks/use-toast";
 import {
   AlertDialog,
@@ -30,12 +30,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Skeleton } from "@/components/ui/skeleton"; // Import Skeleton for loading parts
+import { Skeleton } from "@/components/ui/skeleton";
 
 
 interface MaintenanceOverviewProps {
   logs: MaintenanceLog[];
-  deleteLog: (id: string) => Promise<void>; // Make deleteLog async
+  deleteLog: (id: string) => Promise<void>;
 }
 
 const taskIcons: { [key in MaintenanceLog["taskType"]]: React.ElementType } = {
@@ -47,24 +47,29 @@ const taskIcons: { [key in MaintenanceLog["taskType"]]: React.ElementType } = {
   "Other": Bike,
 };
 
-// Helper function to safely format dates, returning a placeholder or empty string on error
+// Helper function to safely format dates remains the same
 const safeFormatDate = (date: Date | undefined | null, formatString: string = "PPP"): string => {
-  if (date && isValid(date)) {
+  // Ensure the input is a valid Date object before formatting
+  if (date instanceof Date && isValid(date)) {
     try {
         return format(date, formatString);
     } catch (error) {
         console.error("Error formatting date:", date, error);
         return "Invalid Date";
     }
+  } else if (date) {
+     // If it's not a Date object but truthy, log a warning. This might happen if mapping fails.
+     console.warn("safeFormatDate received a non-Date object:", date);
+     return "Invalid Input";
   }
-  return "N/A"; // Return N/A if date is undefined, null, or invalid
+  return "N/A"; // Return N/A if date is undefined, null, or explicitly invalid
 };
 
 
-const getReminderBadge = (dueDate: Date | undefined): React.ReactNode => {
-    // Ensure dueDate is a valid Date object if it exists
-    if (!dueDate || !isValid(dueDate)) {
-        return null; // No badge if no due date or it's invalid
+const getReminderBadge = (dueDate: Date | undefined | null): React.ReactNode => {
+    // Ensure dueDate is a valid Date object
+    if (!dueDate || !(dueDate instanceof Date) || !isValid(dueDate)) {
+        return null; // No badge if no due date or it's invalid/not a Date object
     }
 
     const now = new Date();
@@ -80,11 +85,11 @@ const getReminderBadge = (dueDate: Date | undefined): React.ReactNode => {
 
 
     // Date is in the future
-    const daysUntilDue = differenceInDays(dueDate, now); // Recalculate based on 'now'
+    const daysUntilDue = differenceInDays(dueDate, now);
 
-    if (daysUntilDue <= 7) { // Due within the next 7 days
+    if (daysUntilDue <= 7) {
         return <Badge variant="outline" className="ml-2 flex items-center gap-1 bg-accent text-accent-foreground"><CalendarClock className="h-3 w-3" /> Due in {formatDistanceToNowStrict(dueDate)}</Badge>;
-    } else { // Due further out
+    } else {
         return <Badge variant="secondary" className="ml-2 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Due in {formatDistanceToNowStrict(dueDate)}</Badge>;
     }
 };
@@ -94,73 +99,63 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
   const { toast } = useToast();
   const [upcomingReminders, setUpcomingReminders] = useState<MaintenanceLog[]>([]);
   const [pastLogs, setPastLogs] = useState<MaintenanceLog[]>([]);
-  const [isLoading, setIsLoading] = useState(true); // Add loading state for internal processing
-  const [currentTime, setCurrentTime] = useState<Date | null>(null); // State for client-side Date
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentTime, setCurrentTime] = useState<Date | null>(null);
 
 
    useEffect(() => {
-    // Set current time only on the client side after hydration
+    // Set current time only on the client side
     setCurrentTime(new Date());
   }, []);
 
 
    useEffect(() => {
-     // Wait for currentTime and logs to be available
+     // Wait for currentTime and logs
      if (currentTime === null || !logs) {
          setIsLoading(true);
          return;
      }
-     setIsLoading(true); // Start loading for sorting/filtering
+     setIsLoading(true);
 
-     // Ensure logs have valid Date objects before processing
-    const validLogs = logs.map(log => {
-         // Attempt to create Date objects. If creation fails, isValid will catch it.
-         const datePerformed = log.datePerformed instanceof Date ? log.datePerformed : new Date(log.datePerformed);
-         const nextServiceDue = log.nextServiceDue ? (log.nextServiceDue instanceof Date ? log.nextServiceDue : new Date(log.nextServiceDue)) : undefined;
-
-        return {
-            ...log,
-            datePerformed: datePerformed,
-            nextServiceDue: nextServiceDue,
-        };
-     }).filter(log => isValid(log.datePerformed)); // Filter out logs with invalid datePerformed
-
-
+     // Logs received from props should already have JS Date objects due to mapping layer
+     // Filter logs based on date validity and whether they are upcoming or past
     const now = currentTime; // Use the state variable
 
+    // Filter for valid dates and ensure they are JS Date objects
+    const validLogs = logs.filter(log =>
+        log.datePerformed instanceof Date && isValid(log.datePerformed) &&
+        (!log.nextServiceDue || (log.nextServiceDue instanceof Date && isValid(log.nextServiceDue)))
+    );
+
+
     const upcoming = validLogs.filter(
-      (log) => log.nextServiceDue && isValid(log.nextServiceDue) // Check validity first
-      // Only show reminders that are due today or in the future
-      // && (isFuture(log.nextServiceDue) || differenceInDays(log.nextServiceDue, now) === 0)
+      (log) => log.nextServiceDue // Check if nextServiceDue exists and is a valid Date (already filtered)
     ).sort((a, b) => {
-        // Sort invalid dates to the end if any slip through (shouldn't happen with filter)
-        if (!a.nextServiceDue!) return 1;
-        if (!b.nextServiceDue!) return -1;
-        return a.nextServiceDue!.getTime() - b.nextServiceDue!.getTime(); // Sort directly
+        // Should always be valid Date objects here
+        return a.nextServiceDue!.getTime() - b.nextServiceDue!.getTime();
     });
 
 
     const past = validLogs.filter(
-       (log) => !log.nextServiceDue || !isValid(log.nextServiceDue) || isPast(log.nextServiceDue) // Check validity before isPast
+       (log) => !log.nextServiceDue // Keep logs with no due date in past
+       // Or logs where due date is in the past (already filtered for valid Date objects)
+       || (log.nextServiceDue && isPast(log.nextServiceDue))
     ).sort((a, b) => {
-         // Sort by datePerformed descending for history
-         if (!isValid(a.datePerformed)) return 1;
-         if (!isValid(b.datePerformed)) return -1;
+         // Should always be valid Date objects here
          return b.datePerformed.getTime() - a.datePerformed.getTime();
      });
 
 
     setUpcomingReminders(upcoming);
     setPastLogs(past);
-    setIsLoading(false); // Finish loading
+    setIsLoading(false);
 
-    // Check for due reminders (moved outside the main log processing)
-    // Consider debouncing this or running less frequently if performance is an issue
+    // --- Notification Logic (remains largely the same, ensure date validity) ---
     upcoming.forEach(log => {
         const dueDate = log.nextServiceDue;
-        // Ensure dueDate is valid and check if due today or tomorrow
+        // Ensure dueDate is valid Date and check if due today or tomorrow
          if (dueDate && isValid(dueDate) && differenceInDays(dueDate, now) <= 1 && differenceInDays(dueDate, now) >= 0 ) {
-             const notificationKey = `reminder_sent_${log.id}_${safeFormatDate(dueDate, 'yyyy-MM-dd')}`; // Add date to key
+             const notificationKey = `reminder_sent_${log.id}_${safeFormatDate(dueDate, 'yyyy-MM-dd')}`;
              let alreadySent = false;
              try {
                  alreadySent = localStorage.getItem(notificationKey) === 'true';
@@ -172,20 +167,23 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                     "user-123", // Replace with actual user ID
                     `${log.taskType} is due on ${safeFormatDate(dueDate, "PPP")}`
                 ).then(notification => {
-                    toast({
-                        title: "Maintenance Reminder",
-                        description: notification.message,
-                        variant: "default",
-                    });
-                    try {
-                         localStorage.setItem(notificationKey, 'true');
-                    } catch (e) { console.error("localStorage unavailable"); }
+                    if (notification) { // Check if notification was actually sent (optional)
+                        toast({
+                            title: "Maintenance Reminder",
+                            description: notification.message,
+                            variant: "default",
+                        });
+                        try {
+                             localStorage.setItem(notificationKey, 'true');
+                        } catch (e) { console.error("localStorage unavailable"); }
+                    }
                 }).catch(error => {
                     console.error("Failed to send notification:", error);
                 });
             }
         }
     });
+    // --- End Notification Logic ---
 
    // eslint-disable-next-line react-hooks/exhaustive-deps
    }, [logs, currentTime]); // Rerun when logs or currentTime change
@@ -193,15 +191,15 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
 
   const handleDelete = async (id: string, taskType: string) => {
      try {
-         await deleteLog(id);
-         // Toast is now handled in the parent component after successful DB operation
+         await deleteLog(id); // Call the delete function passed via props
+         // Toast is handled in the parent component
      } catch (error) {
-         // Error toast is handled in the parent component
          console.error("Overview: Failed to trigger delete log", error);
+         // Error toast is handled in the parent component
      }
   }
 
-  // Loading Skeleton for the tables
+  // Loading Skeleton remains the same
    const TableSkeleton = ({ rows = 5 }: { rows?: number }) => (
      <Table>
        <TableHeader>
@@ -226,9 +224,8 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
    );
 
 
-   // Conditional rendering based on loading state
+   // Conditional rendering based on loading state remains the same
     if (currentTime === null) {
-        // Initial loading state before client-side hydration
         return (
             <Card>
                 <CardHeader>
@@ -267,15 +264,20 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                         <TableBody>
                         {upcomingReminders.map((log) => {
                             const Icon = taskIcons[log.taskType] || Bike;
+                            // Ensure dates are valid Date objects before passing to helpers
+                            const validDatePerformed = log.datePerformed instanceof Date && isValid(log.datePerformed) ? log.datePerformed : undefined;
+                            const validNextServiceDue = log.nextServiceDue instanceof Date && isValid(log.nextServiceDue) ? log.nextServiceDue : undefined;
+
                             return (
                                 <TableRow key={log.id}>
                                     <TableCell className="font-medium flex items-center gap-2">
                                     <Icon className="h-4 w-4 text-muted-foreground" />
                                     {log.taskType}
                                     </TableCell>
-                                    {/* Use safeFormatDate */}
-                                    <TableCell>{safeFormatDate(log.nextServiceDue, "PPP")}</TableCell>
-                                    <TableCell>{getReminderBadge(log.nextServiceDue)}</TableCell>
+                                    {/* Use safeFormatDate with validated date */}
+                                    <TableCell>{safeFormatDate(validNextServiceDue, "PPP")}</TableCell>
+                                    {/* Pass validated date to badge generator */}
+                                    <TableCell>{getReminderBadge(validNextServiceDue)}</TableCell>
                                      <TableCell className="text-right">
                                          <AlertDialog>
                                             <AlertDialogTrigger asChild>
@@ -288,12 +290,12 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                                                 <AlertDialogHeader>
                                                 <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                                                 <AlertDialogDescription>
-                                                    This action cannot be undone. This will permanently delete the upcoming reminder for "{log.taskType}" due on {safeFormatDate(log.nextServiceDue, "PPP")}. The original log performed on {safeFormatDate(log.datePerformed, "PPP")} will remain in history (if applicable).
+                                                    {/* Use safeFormatDate for display */}
+                                                    This action cannot be undone. This will permanently delete the upcoming reminder for "{log.taskType}" due on {safeFormatDate(validNextServiceDue, "PPP")}. The original log performed on {safeFormatDate(validDatePerformed, "PPP")} will remain in history (if applicable).
                                                 </AlertDialogDescription>
                                                 </AlertDialogHeader>
                                                 <AlertDialogFooter>
                                                 <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                                {/* Wrap async call */}
                                                 <AlertDialogAction onClick={async () => await handleDelete(log.id, log.taskType)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                                                     Delete Reminder
                                                 </AlertDialogAction>
@@ -337,14 +339,16 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                 <TableBody>
                     {pastLogs.map((log) => {
                     const Icon = taskIcons[log.taskType] || Bike;
+                     // Ensure datePerformed is valid Date before formatting
+                     const validDatePerformed = log.datePerformed instanceof Date && isValid(log.datePerformed) ? log.datePerformed : undefined;
                     return (
                         <TableRow key={log.id}>
                         <TableCell className="font-medium flex items-center gap-2">
                             <Icon className="h-4 w-4 text-muted-foreground" />
                             {log.taskType}
                         </TableCell>
-                        {/* Use safeFormatDate to prevent errors */}
-                        <TableCell>{safeFormatDate(log.datePerformed, "PPP")}</TableCell>
+                        {/* Use safeFormatDate with validated date */}
+                        <TableCell>{safeFormatDate(validDatePerformed, "PPP")}</TableCell>
                         <TableCell className="max-w-xs truncate" title={log.notes}>{log.notes || "N/A"}</TableCell>
                         <TableCell className="text-right">
                             <AlertDialog>
@@ -358,12 +362,12 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                                     <AlertDialogHeader>
                                     <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                                     <AlertDialogDescription>
-                                        This action cannot be undone. This will permanently delete the maintenance log for "{log.taskType}" performed on {safeFormatDate(log.datePerformed, "PPP")}.
+                                        {/* Use safeFormatDate for display */}
+                                        This action cannot be undone. This will permanently delete the maintenance log for "{log.taskType}" performed on {safeFormatDate(validDatePerformed, "PPP")}.
                                     </AlertDialogDescription>
                                     </AlertDialogHeader>
                                     <AlertDialogFooter>
                                     <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    {/* Wrap async call */}
                                     <AlertDialogAction onClick={async () => await handleDelete(log.id, log.taskType)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
                                         Delete
                                     </AlertDialogAction>

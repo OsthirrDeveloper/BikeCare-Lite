@@ -9,19 +9,21 @@ import { Header } from "@/components/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { isValid, addDays } from "date-fns";
+// Import Firestore-based service functions
 import { subscribeToMaintenanceLogs, addMaintenanceLog, deleteMaintenanceLog, getInitialMaintenanceLogs } from "@/services/maintenanceService";
 import { useToast } from "@/hooks/use-toast";
-import { Skeleton } from "@/components/ui/skeleton"; // Import Skeleton
+import { Skeleton } from "@/components/ui/skeleton";
 
 // Placeholder User ID - Replace with actual authentication logic
 const USER_ID = "user-123";
 
 // Default initial logs if DB is empty (consider seeding this in DB instead)
+// Keeping the structure the same, service layer handles Timestamp conversion
 const defaultInitialLogs: Omit<MaintenanceLog, 'id'>[] = [
     // Weekly / Every Few Rides (+7 days)
     { taskType: "Chain Lube", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 7), notes: "Recommended weekly / every few rides" },
-    { taskType: "Tire Pressure", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 3), notes: "Recommended every 3 days" }, // Adjusted frequency
-    { taskType: "Brake Check", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 14), notes: "Check pad wear (recommended every 2 weeks)" }, // Adjusted frequency
+    { taskType: "Tire Pressure", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 3), notes: "Recommended every 3 days" },
+    { taskType: "Brake Check", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 14), notes: "Check pad wear (recommended every 2 weeks)" },
     { taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 7), notes: "Quick gear shift test (recommended weekly / every few rides)" },
 
     // Monthly (+30 days)
@@ -33,58 +35,56 @@ const defaultInitialLogs: Omit<MaintenanceLog, 'id'>[] = [
     { taskType: "Wash", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 75), notes: "Full bike wash (recommended every 2-3 months)" },
     { taskType: "Chain Lube", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 75), notes: "Re-lube all moving parts (recommended every 2-3 months)" },
     { taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 75), notes: "Check bolts for tightness (recommended every 2-3 months)" },
-    { taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 75), notes: "Chain Stretch Check (recommended every 2-3 months)" }, // Added
-
+    { taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 75), notes: "Chain Stretch Check (recommended every 2-3 months)" },
 
     // Every 6 Months (+180 days)
     { taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 180), notes: "Bottom bracket inspection (recommended every 6 months)" },
     { taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 180), notes: "Wheel truing (if needed) (recommended every 6 months)" },
-    { taskType: "Hub Service", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 180), notes: "Check hub bearings / Hub Greasing (recommended every 6 months)" }, // Merged Hub Service/Greasing
+    { taskType: "Hub Service", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 180), notes: "Check hub bearings / Hub Greasing (recommended every 6 months)" },
 ];
 
 
 export default function Home() {
   const [maintenanceLogs, setMaintenanceLogs] = useState<MaintenanceLog[]>([]);
-  const [isLoading, setIsLoading] = useState(true); // Add loading state
+  const [isLoading, setIsLoading] = useState(true);
   const [isClient, setIsClient] = useState(false);
   const { toast } = useToast();
 
-  // Fetch initial data and set up real-time listener
+  // Fetch initial data and set up real-time listener (using Firestore service)
   useEffect(() => {
-    setIsClient(true); // Indicate client-side rendering
+    setIsClient(true);
 
     let unsubscribe: (() => void) | null = null;
 
     const setupListener = async () => {
         try {
-             // Fetch initial data quickly
+            // Fetch initial data quickly using Firestore service
             const initialData = await getInitialMaintenanceLogs(USER_ID);
             if (initialData.length === 0) {
-                // Seed database if empty (optional, consider doing this server-side or manually)
-                console.log("No logs found in DB, seeding with default tasks...");
-                 // Await all promises from adding default logs
+                console.log("No logs found in Firestore, seeding with default tasks...");
+                // Seed Firestore if empty
                 await Promise.all(defaultInitialLogs.map(log => addMaintenanceLog(USER_ID, log)));
-                 // Fetch again after seeding (or rely on the listener below)
-                 // setMaintenanceLogs(await getInitialMaintenanceLogs(USER_ID)); // Fetch again if needed immediately
+                // No need to fetch again, listener will pick up seeded data
             } else {
                 setMaintenanceLogs(initialData);
             }
             setIsLoading(false); // Initial load complete
 
-            // Set up the real-time listener
+            // Set up the real-time listener using Firestore service
             unsubscribe = subscribeToMaintenanceLogs(USER_ID, (updatedLogs) => {
                 setMaintenanceLogs(updatedLogs);
-                 // No need to set loading false here again unless you want a spinner on every update
+                // Optionally set loading false here if you want a spinner on every update
+                // setIsLoading(false);
             });
 
         } catch (error) {
-            console.error("Error setting up maintenance log listener:", error);
+            console.error("Error setting up Firestore maintenance log listener:", error);
             toast({
                 title: "Error Loading Data",
                 description: "Could not load maintenance logs from the database.",
                 variant: "destructive",
             });
-            setIsLoading(false); // Stop loading even on error
+            setIsLoading(false);
         }
     };
 
@@ -99,7 +99,7 @@ export default function Home() {
   }, [toast]); // Add toast dependency
 
   const handleAddLog = async (newLogData: Omit<MaintenanceLog, 'id'>) => {
-    // Ensure the new log dates are valid Date objects before adding
+    // Basic date validation remains the same
     if (!isValid(newLogData.datePerformed) || (newLogData.nextServiceDue && !isValid(newLogData.nextServiceDue))) {
         console.error("Attempted to add log with invalid date:", newLogData);
         toast({
@@ -111,11 +111,11 @@ export default function Home() {
     }
 
     try {
+      // Call Firestore add function
       await addMaintenanceLog(USER_ID, newLogData);
-      // No need to manually update state, listener will handle it.
-      // toast is handled in the form component upon successful submission.
+      // Listener handles state update, toast handled in form
     } catch (error) {
-      console.error("Failed to add log:", error);
+      console.error("Failed to add log to Firestore:", error);
       toast({
         title: "Error Adding Log",
         description: "Could not save the maintenance log to the database.",
@@ -126,19 +126,19 @@ export default function Home() {
 
    const handleDeleteLog = async (idToDelete: string) => {
      try {
-        // Find the task type before deleting for the toast message
         const logToDelete = maintenanceLogs.find(log => log.id === idToDelete);
         const taskType = logToDelete ? logToDelete.taskType : 'Task';
 
+        // Call Firestore delete function
         await deleteMaintenanceLog(USER_ID, idToDelete);
-        // No need to manually update state, listener will handle it.
+        // Listener handles state update
          toast({
             title: "Log Deleted",
             description: `Maintenance log for ${taskType} deleted successfully.`,
-            variant: "destructive" // Keep variant destructive for delete action
+            variant: "destructive"
          });
      } catch (error) {
-         console.error("Failed to delete log:", error);
+         console.error("Failed to delete log from Firestore:", error);
          toast({
             title: "Error Deleting Log",
             description: "Could not delete the maintenance log from the database.",
@@ -147,7 +147,7 @@ export default function Home() {
      }
    };
 
-   // Loading State UI
+   // Loading State UI (remains the same)
    const LoadingSkeleton = () => (
      <div className="space-y-4">
          <Skeleton className="h-10 w-full" />
@@ -182,6 +182,7 @@ export default function Home() {
               {!isClient || isLoading ? (
                  <LoadingSkeleton />
               ) : (
+                 // Pass Firestore logs and delete function
                  <MaintenanceOverview logs={maintenanceLogs} deleteLog={handleDeleteLog}/>
               )}
            </div>
