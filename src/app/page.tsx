@@ -8,13 +8,30 @@ import { MaintenanceOverview } from "@/components/maintenance-overview";
 import { Header } from "@/components/header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { isValid } from "date-fns"; // Import isValid
+import { isValid, addDays } from "date-fns"; // Import isValid and addDays
 
-// Mock data for initial state - replace with data fetching in a real app
+// Pre-added maintenance tasks for Veloce Legion 10
 const initialLogs: MaintenanceLog[] = [
-  { id: "1", taskType: "Chain Lube", datePerformed: new Date(Date.now() - 86400000 * 7), notes: "Used wet lube", nextServiceDue: new Date(Date.now() + 86400000 * 7) }, // Due in 7 days
-  { id: "2", taskType: "Brake Check", datePerformed: new Date(Date.now() - 86400000 * 30), notes: "Pads look good" },
-  { id: "3", taskType: "Tire Pressure", datePerformed: new Date(Date.now() - 86400000 * 2), nextServiceDue: new Date(Date.now() + 86400000 * 1) }, // Due tomorrow
+  // Weekly / Every Few Rides (+7 days)
+  { id: crypto.randomUUID(), taskType: "Chain Lube", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 7), notes: "Recommended weekly / every few rides" },
+  { id: crypto.randomUUID(), taskType: "Tire Pressure", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 7), notes: "Recommended weekly / every few rides" },
+  { id: crypto.randomUUID(), taskType: "Brake Check", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 7), notes: "Check pad wear (recommended weekly / every few rides)" },
+  { id: crypto.randomUUID(), taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 7), notes: "Quick gear shift test (recommended weekly / every few rides)" },
+
+  // Monthly (+30 days)
+  { id: crypto.randomUUID(), taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 30), notes: "Derailleur adjustment (recommended monthly)" },
+  { id: crypto.randomUUID(), taskType: "Brake Check", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 30), notes: "Check brake cable tension (recommended monthly)" },
+  { id: crypto.randomUUID(), taskType: "Wash", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 30), notes: "Clean drivetrain (chain, cassette, chainring) (recommended monthly)" },
+
+  // Every 2-3 Months (+75 days)
+  { id: crypto.randomUUID(), taskType: "Wash", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 75), notes: "Full bike wash (recommended every 2-3 months)" },
+  { id: crypto.randomUUID(), taskType: "Chain Lube", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 75), notes: "Re-lube all moving parts (recommended every 2-3 months)" },
+  { id: crypto.randomUUID(), taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 75), notes: "Check bolts for tightness (recommended every 2-3 months)" },
+
+  // Every 6 Months (+180 days)
+  { id: crypto.randomUUID(), taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 180), notes: "Bottom bracket inspection (recommended every 6 months)" },
+  { id: crypto.randomUUID(), taskType: "Other", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 180), notes: "Wheel truing (if needed) (recommended every 6 months)" },
+  { id: crypto.randomUUID(), taskType: "Hub Service", datePerformed: new Date(), nextServiceDue: addDays(new Date(), 180), notes: "Check hub bearings (recommended every 6 months)" },
 ];
 
 
@@ -46,14 +63,20 @@ export default function Home() {
             };
         }).filter((log: MaintenanceLog | null): log is MaintenanceLog => log !== null); // Filter out null (skipped) logs
 
-        setMaintenanceLogs(parsedLogs);
+        // Only set logs if the parsed logs are not empty, otherwise use initialLogs
+        if (parsedLogs.length > 0) {
+            setMaintenanceLogs(parsedLogs);
+        } else {
+             // Initialize with pre-added tasks if no valid logs are stored
+             setMaintenanceLogs(initialLogs);
+        }
       } else {
-         // Initialize with mock data if no logs are stored
+         // Initialize with pre-added tasks if no logs are stored at all
          setMaintenanceLogs(initialLogs);
       }
     } catch (error) {
       console.error("Failed to load logs from localStorage:", error);
-       // Fallback to initial mock data in case of error
+       // Fallback to initial pre-added tasks in case of error
       setMaintenanceLogs(initialLogs);
     }
   }, []);
@@ -84,7 +107,9 @@ export default function Home() {
         // Optionally show an error toast to the user
         return;
     }
-    setMaintenanceLogs((prevLogs) => [...prevLogs, newLog]);
+    // Use crypto.randomUUID for new logs added via form
+    const logWithId = { ...newLog, id: crypto.randomUUID() };
+    setMaintenanceLogs((prevLogs) => [...prevLogs, logWithId]);
   };
 
    const deleteLog = (idToDelete: string) => {
@@ -126,5 +151,3 @@ export default function Home() {
      </div>
   );
 }
-
-    
