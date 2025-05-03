@@ -26,13 +26,14 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+// Remove Select imports as we are using Combobox (Popover + Command)
+// import {
+//   Select,
+//   SelectContent,
+//   SelectItem,
+//   SelectTrigger,
+//   SelectValue,
+// } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"; // Import Command components
@@ -41,11 +42,12 @@ const maintenanceTasks: { value: MaintenanceTaskType; label: string; icon: React
   { value: "Chain Lube", label: "Chain Lube", icon: Droplet },
   { value: "Brake Check", label: "Brake Check", icon: CircleCheck },
   { value: "Tire Pressure", label: "Tire Pressure", icon: Gauge },
-  { value: "Hub Service", label: "Hub Service", icon: Wrench },
+  { value: "Hub Service", label: "Hub Service / Greasing", icon: Wrench }, // Updated label
   { value: "Wash", label: "Bike Wash", icon: Wind }, // Using Wind for wash
-  { value: "Other", label: "Other", icon: Bike },
+  { value: "Other", label: "Other (Specify in Notes)", icon: Bike }, // Updated label
 ];
 
+// Ensure Zod enum includes all possible task types defined above
 const formSchema = z.object({
   taskType: z.enum([
     "Chain Lube",
@@ -54,7 +56,7 @@ const formSchema = z.object({
     "Hub Service",
     "Wash",
     "Other",
-  ]),
+  ], { required_error: "Task type is required." }), // Added required error
   datePerformed: z.date({
     required_error: "Date performed is required.",
   }),
@@ -65,35 +67,47 @@ const formSchema = z.object({
 type MaintenanceFormValues = z.infer<typeof formSchema>;
 
 interface MaintenanceLogFormProps {
-  addLog: (log: MaintenanceLog) => void;
+  addLog: (log: Omit<MaintenanceLog, 'id'>) => Promise<void>; // Make addLog async and expect Omit<...>
 }
 
 export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
   const { toast } = useToast();
   const [taskTypePopoverOpen, setTaskTypePopoverOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false); // Add submitting state
 
   const form = useForm<MaintenanceFormValues>({
     resolver: zodResolver(formSchema),
     defaultValues: {
       datePerformed: new Date(),
       notes: "",
+      taskType: undefined, // Ensure taskType is initially undefined for placeholder
     },
   });
 
-  function onSubmit(data: MaintenanceFormValues) {
-    const newLog: MaintenanceLog = {
-      id: crypto.randomUUID(), // Simple ID generation for client-side
+  async function onSubmit(data: MaintenanceFormValues) {
+    setIsSubmitting(true); // Disable button on submit
+    const newLogData: Omit<MaintenanceLog, 'id'> = { // Create data without ID
       taskType: data.taskType,
       datePerformed: data.datePerformed,
       notes: data.notes,
       nextServiceDue: data.nextServiceDue,
     };
-    addLog(newLog);
-    toast({
-      title: "Maintenance Logged",
-      description: `${data.taskType} performed on ${format(data.datePerformed, "PPP")}.`,
-    });
-    form.reset({ datePerformed: new Date(), notes: "" }); // Reset form after submission
+
+    try {
+        await addLog(newLogData); // Call the async addLog prop
+        toast({
+            title: "Maintenance Logged",
+            description: `${data.taskType} performed on ${format(data.datePerformed, "PPP")}.`,
+            variant: "default" // Use default variant for success
+        });
+        form.reset({ datePerformed: new Date(), notes: "", taskType: undefined }); // Reset form
+    } catch (error) {
+        // Error toast is handled in the parent component where addLog is defined
+        console.error("Form submission error:", error)
+    } finally {
+        setIsSubmitting(false); // Re-enable button
+    }
+
   }
 
   return (
@@ -114,19 +128,21 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
                       aria-expanded={taskTypePopoverOpen}
                       className={cn(
                         "w-full justify-between",
-                        !field.value && "text-muted-foreground"
+                        !field.value && "text-muted-foreground" // Style placeholder
                       )}
+                      // Ensure type="button" to prevent form submission on trigger click
+                      type="button"
                     >
                       {field.value
                         ? maintenanceTasks.find(
                             (task) => task.value === field.value
                           )?.label
-                        : "Select task type"}
+                        : "Select task type..."}
                       <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                   </FormControl>
                 </PopoverTrigger>
-                <PopoverContent className="w-[--radix-popover-trigger-width] p-0">
+                <PopoverContent className="w-[--radix-popover-trigger-width] max-h-[--radix-popover-content-available-height] p-0">
                    <Command>
                     <CommandInput placeholder="Search task..." />
                     <CommandList>
@@ -134,15 +150,17 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
                       <CommandGroup>
                         {maintenanceTasks.map((task) => (
                           <CommandItem
-                            value={task.label}
+                            value={task.label} // Use label for searching/filtering
                             key={task.value}
                             onSelect={() => {
-                              form.setValue("taskType", task.value);
+                              form.setValue("taskType", task.value, { shouldValidate: true }); // Validate on change
                               setTaskTypePopoverOpen(false);
                             }}
                           >
-                            <task.icon className="mr-2 h-4 w-4" />
-                            {task.label}
+                            <task.icon className={cn("mr-2 h-4 w-4",
+                               task.value === field.value ? "opacity-100" : "opacity-60" // Indicate selection subtly
+                            )} />
+                            <span>{task.label}</span>
                             <Check
                               className={cn(
                                 "ml-auto h-4 w-4",
@@ -174,6 +192,7 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
                   <FormControl>
                     <Button
                       variant={"outline"}
+                      type="button" // Ensure this is not submitting the form
                       className={cn(
                         "w-full pl-3 text-left font-normal",
                         !field.value && "text-muted-foreground"
@@ -192,7 +211,10 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
                   <Calendar
                     mode="single"
                     selected={field.value}
-                    onSelect={field.onChange}
+                    onSelect={(date) => {
+                         field.onChange(date); // Update field value
+                         form.trigger("datePerformed"); // Manually trigger validation if needed
+                     }}
                     disabled={(date) =>
                       date > new Date() || date < new Date("1900-01-01")
                     }
@@ -213,7 +235,7 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
               <FormLabel>Notes (Optional)</FormLabel>
               <FormControl>
                 <Textarea
-                  placeholder="Any specific details? e.g., Replaced brake pads"
+                  placeholder="Any specific details? e.g., Replaced brake pads, Tuned gears, Checked chain stretch..."
                   {...field}
                 />
               </FormControl>
@@ -233,6 +255,7 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
                   <FormControl>
                     <Button
                       variant={"outline"}
+                      type="button" // Prevent form submission
                       className={cn(
                         "w-full pl-3 text-left font-normal",
                         !field.value && "text-muted-foreground"
@@ -251,21 +274,25 @@ export function MaintenanceLogForm({ addLog }: MaintenanceLogFormProps) {
                   <Calendar
                     mode="single"
                     selected={field.value}
-                    onSelect={field.onChange}
+                     onSelect={(date) => {
+                         field.onChange(date);
+                         form.trigger("nextServiceDue");
+                     }}
+                     disabled={(date) => date < new Date()} // Can only set reminders for the future
                     initialFocus
                   />
                 </PopoverContent>
               </Popover>
                <FormDescription>
-                 Set a date for the next reminder for this task.
+                 Set a future date for the next maintenance reminder for this task.
               </FormDescription>
               <FormMessage />
             </FormItem>
           )}
         />
 
-        <Button type="submit" className="w-full">
-          Log Maintenance Task
+        <Button type="submit" className="w-full" disabled={isSubmitting}>
+          {isSubmitting ? "Logging..." : "Log Maintenance Task"}
         </Button>
       </form>
     </Form>
