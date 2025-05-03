@@ -213,7 +213,7 @@ export function MaintenanceOverview({ logs, deleteLog, editLog }: MaintenanceOve
            <TableHead><Skeleton className="h-5 w-20" /></TableHead>
            <TableHead><Skeleton className="h-5 w-24" /></TableHead>
            <TableHead><Skeleton className="h-5 w-32" /></TableHead>
-            <TableHead><Skeleton className="h-5 w-40" /></TableHead> {/* Added for notes */}
+           <TableHead><Skeleton className="h-5 w-40" /></TableHead> {/* Added for notes */}
            <TableHead className="text-right"><Skeleton className="h-5 w-24" /></TableHead> {/* Adjusted for actions */}
          </TableRow>
        </TableHeader>
