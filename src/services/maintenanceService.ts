@@ -13,9 +13,18 @@ import {
   serverTimestamp, // Import serverTimestamp for creation time if needed
   QuerySnapshot,
   DocumentData,
+  updateDoc, // Import updateDoc
 } from "firebase/firestore";
 import type { MaintenanceLog } from "@/types/maintenance";
 import { isValid } from "date-fns";
+
+// Helper function to convert JS Date to Firestore Timestamp or null
+const dateToTimestampOrNull = (date: Date | undefined | null): Timestamp | null => {
+  if (date && isValid(date)) {
+    return Timestamp.fromDate(date);
+  }
+  return null;
+};
 
 // Helper to map Firestore data (QuerySnapshot) to MaintenanceLog array
 const mapFirestoreDataToLogs = (snapshot: QuerySnapshot<DocumentData, DocumentData>): MaintenanceLog[] => {
@@ -31,7 +40,7 @@ const mapFirestoreDataToLogs = (snapshot: QuerySnapshot<DocumentData, DocumentDa
     } else {
       // Fallback or handle potential string dates if necessary (though storing as Timestamp is best)
       console.warn(`Invalid datePerformed format for log ID ${docSnap.id}. Using current date as fallback.`);
-      datePerformed = new Date();
+      datePerformed = new Date(); // Consider logging this or handling more gracefully
     }
 
     let nextServiceDue: Date | undefined;
@@ -45,7 +54,7 @@ const mapFirestoreDataToLogs = (snapshot: QuerySnapshot<DocumentData, DocumentDa
       id: docSnap.id, // Firestore document ID
       taskType: logData.taskType,
       datePerformed: datePerformed,
-      notes: logData.notes,
+      notes: logData.notes ?? '', // Ensure notes is always a string
       nextServiceDue: nextServiceDue,
     };
   });
@@ -87,17 +96,14 @@ export const addMaintenanceLog = async (userId: string, logData: Omit<Maintenanc
     const logsCollectionRef = collection(firestore, `users/${userId}/maintenanceLogs`);
 
     // Convert JS Dates to Firestore Timestamps before saving
-    const datePerformedTimestamp = logData.datePerformed && isValid(logData.datePerformed)
-        ? Timestamp.fromDate(logData.datePerformed)
-        : serverTimestamp(); // Use server timestamp if date is invalid or use Timestamp.now() for client time
+    const datePerformedTimestamp = dateToTimestampOrNull(logData.datePerformed) ?? serverTimestamp(); // Use server timestamp if date is invalid
 
-    const nextServiceDueTimestamp = logData.nextServiceDue && isValid(logData.nextServiceDue)
-         ? Timestamp.fromDate(logData.nextServiceDue)
-         : null; // Store null if undefined or invalid
+    const nextServiceDueTimestamp = dateToTimestampOrNull(logData.nextServiceDue); // Will be null if undefined or invalid
 
     const dataToSave = {
-      ...logData,
+      taskType: logData.taskType,
       datePerformed: datePerformedTimestamp,
+      notes: logData.notes ?? "", // Ensure notes is saved as string
       nextServiceDue: nextServiceDueTimestamp,
       // Optional: Add a createdAt timestamp
       // createdAt: serverTimestamp(),
@@ -107,6 +113,44 @@ export const addMaintenanceLog = async (userId: string, logData: Omit<Maintenanc
   } catch (error) {
     console.error("Error adding maintenance log to Firestore:", error);
     throw new Error("Failed to add maintenance log."); // Re-throw for handling in the component
+  }
+};
+
+/**
+ * Updates an existing maintenance log in Firestore for a specific user.
+ * @param userId The ID of the user.
+ * @param logId The ID of the log (Firestore document ID) to update.
+ * @param updatedData Partial data to update the log with.
+ * @returns A promise that resolves when the log is updated.
+ */
+export const updateMaintenanceLog = async (userId: string, logId: string, updatedData: Partial<Omit<MaintenanceLog, 'id'>>): Promise<void> => {
+  try {
+    const logDocRef = doc(firestore, `users/${userId}/maintenanceLogs/${logId}`);
+
+    // Prepare data for Firestore, converting dates to Timestamps
+    const dataToUpdate: Record<string, any> = {};
+    if (updatedData.taskType !== undefined) dataToUpdate.taskType = updatedData.taskType;
+    if (updatedData.notes !== undefined) dataToUpdate.notes = updatedData.notes ?? "";
+    if (updatedData.datePerformed !== undefined) {
+        // Allow setting to null if needed, but usually a date is required
+        dataToUpdate.datePerformed = dateToTimestampOrNull(updatedData.datePerformed) ?? serverTimestamp();
+    }
+    if (updatedData.hasOwnProperty('nextServiceDue')) { // Check if property exists, even if undefined/null
+      dataToUpdate.nextServiceDue = dateToTimestampOrNull(updatedData.nextServiceDue);
+    }
+    // Optional: Add an updatedAt timestamp
+    // dataToUpdate.updatedAt = serverTimestamp();
+
+    // Only update if there's data to update
+    if (Object.keys(dataToUpdate).length > 0) {
+        await updateDoc(logDocRef, dataToUpdate);
+    } else {
+        console.warn("No valid data provided for update.");
+    }
+
+  } catch (error) {
+    console.error("Error updating maintenance log in Firestore:", error);
+    throw new Error("Failed to update maintenance log."); // Re-throw for handling in the component
   }
 };
 

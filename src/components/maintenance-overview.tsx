@@ -16,7 +16,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { format, differenceInDays, isFuture, isPast, isValid, formatDistanceToNowStrict } from "date-fns";
-import { Droplet, Gauge, Wrench, CircleCheck, Wind, Bike, AlertTriangle, CheckCircle2, CalendarClock, Trash2, Info } from "lucide-react";
+import { Droplet, Gauge, Wrench, CircleCheck, Wind, Bike, AlertTriangle, CheckCircle2, CalendarClock, Trash2, Info, Pencil } from "lucide-react";
 import { sendMaintenanceReminder } from "@/services/notification"; // Assuming this remains unchanged for now
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -31,11 +31,18 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 
 interface MaintenanceOverviewProps {
   logs: MaintenanceLog[];
   deleteLog: (id: string) => Promise<void>;
+  editLog: (log: MaintenanceLog) => void; // Add editLog prop
 }
 
 const taskIcons: { [key in MaintenanceLog["taskType"]]: React.ElementType } = {
@@ -73,29 +80,27 @@ const getReminderBadge = (dueDate: Date | undefined | null): React.ReactNode => 
     }
 
     const now = new Date();
-    // Check if the date is in the past (including today)
-     if (!isFuture(dueDate) && differenceInDays(dueDate, now) <= 0) {
-        const daysPast = differenceInDays(now, dueDate);
-         if (daysPast === 0) {
-            return <Badge variant="destructive" className="ml-2 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Due Today</Badge>;
-         } else {
-             return <Badge variant="destructive" className="ml-2 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Overdue by {formatDistanceToNowStrict(dueDate)}</Badge>;
-         }
-    }
+    now.setHours(0, 0, 0, 0); // Normalize 'now' to the start of the day for consistent comparison
+    const due = new Date(dueDate);
+    due.setHours(0, 0, 0, 0); // Normalize 'dueDate' to the start of the day
+
+    const daysDiff = differenceInDays(due, now);
 
 
-    // Date is in the future
-    const daysUntilDue = differenceInDays(dueDate, now);
-
-    if (daysUntilDue <= 7) {
-        return <Badge variant="outline" className="ml-2 flex items-center gap-1 bg-accent text-accent-foreground"><CalendarClock className="h-3 w-3" /> Due in {formatDistanceToNowStrict(dueDate)}</Badge>;
-    } else {
-        return <Badge variant="secondary" className="ml-2 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Due in {formatDistanceToNowStrict(dueDate)}</Badge>;
-    }
+     if (daysDiff < 0) { // Overdue
+         const daysPast = Math.abs(daysDiff);
+         return <Badge variant="destructive" className="ml-2 flex items-center gap-1 whitespace-nowrap"><AlertTriangle className="h-3 w-3" /> Overdue by {formatDistanceToNowStrict(dueDate)}</Badge>;
+     } else if (daysDiff === 0) { // Due Today
+         return <Badge variant="destructive" className="ml-2 flex items-center gap-1 whitespace-nowrap"><AlertTriangle className="h-3 w-3" /> Due Today</Badge>;
+     } else if (daysDiff <= 7) { // Due within a week
+         return <Badge variant="outline" className="ml-2 flex items-center gap-1 whitespace-nowrap bg-accent text-accent-foreground"><CalendarClock className="h-3 w-3" /> Due in {formatDistanceToNowStrict(dueDate)}</Badge>;
+     } else { // Due later than a week
+         return <Badge variant="secondary" className="ml-2 flex items-center gap-1 whitespace-nowrap"><CheckCircle2 className="h-3 w-3" /> Due in {formatDistanceToNowStrict(dueDate)}</Badge>;
+     }
 };
 
 
-export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProps) {
+export function MaintenanceOverview({ logs, deleteLog, editLog }: MaintenanceOverviewProps) {
   const { toast } = useToast();
   const [upcomingReminders, setUpcomingReminders] = useState<MaintenanceLog[]>([]);
   const [pastLogs, setPastLogs] = useState<MaintenanceLog[]>([]);
@@ -127,21 +132,20 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
         (!log.nextServiceDue || (log.nextServiceDue instanceof Date && isValid(log.nextServiceDue)))
     );
 
-
-    const upcoming = validLogs.filter(
-      (log) => log.nextServiceDue // Check if nextServiceDue exists and is a valid Date (already filtered)
-    ).sort((a, b) => {
-        // Should always be valid Date objects here
-        return a.nextServiceDue!.getTime() - b.nextServiceDue!.getTime();
-    });
-
-
-    const past = validLogs.filter(
-       (log) => !log.nextServiceDue // Keep logs with no due date in past
-       // Or logs where due date is in the past (already filtered for valid Date objects)
-       || (log.nextServiceDue && isPast(log.nextServiceDue))
-    ).sort((a, b) => {
+     // Upcoming: has a nextServiceDue date that is in the future (or today)
+     const upcoming = validLogs.filter(
+         (log) => log.nextServiceDue && !isPast(log.nextServiceDue)
+     ).sort((a, b) => {
          // Should always be valid Date objects here
+         return a.nextServiceDue!.getTime() - b.nextServiceDue!.getTime();
+     });
+
+
+    // Past: Either no nextServiceDue date OR nextServiceDue date is in the past
+     const past = validLogs.filter(
+         (log) => !log.nextServiceDue || (log.nextServiceDue && isPast(log.nextServiceDue))
+     ).sort((a, b) => {
+         // Sort past logs by date performed, newest first
          return b.datePerformed.getTime() - a.datePerformed.getTime();
      });
 
@@ -150,36 +154,38 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
     setPastLogs(past);
     setIsLoading(false);
 
-    // --- Notification Logic (remains largely the same, ensure date validity) ---
+    // --- Notification Logic ---
+    // Check only upcoming logs that are due today or tomorrow
     upcoming.forEach(log => {
         const dueDate = log.nextServiceDue;
-        // Ensure dueDate is valid Date and check if due today or tomorrow
-         if (dueDate && isValid(dueDate) && differenceInDays(dueDate, now) <= 1 && differenceInDays(dueDate, now) >= 0 ) {
-             const notificationKey = `reminder_sent_${log.id}_${safeFormatDate(dueDate, 'yyyy-MM-dd')}`;
-             let alreadySent = false;
-             try {
-                 alreadySent = localStorage.getItem(notificationKey) === 'true';
-             } catch (e) { console.error("localStorage unavailable"); }
+        if (dueDate && isValid(dueDate)) {
+            const daysUntil = differenceInDays(dueDate, now);
+            if (daysUntil >= 0 && daysUntil <= 1) { // Due today or tomorrow
+                 const notificationKey = `reminder_sent_${log.id}_${safeFormatDate(dueDate, 'yyyy-MM-dd')}`;
+                 let alreadySent = false;
+                 try {
+                     alreadySent = localStorage.getItem(notificationKey) === 'true';
+                 } catch (e) { console.error("localStorage unavailable"); }
 
-
-             if (!alreadySent) {
-                sendMaintenanceReminder(
-                    "user-123", // Replace with actual user ID
-                    `${log.taskType} is due on ${safeFormatDate(dueDate, "PPP")}`
-                ).then(notification => {
-                    if (notification) { // Check if notification was actually sent (optional)
-                        toast({
-                            title: "Maintenance Reminder",
-                            description: notification.message,
-                            variant: "default",
-                        });
-                        try {
-                             localStorage.setItem(notificationKey, 'true');
-                        } catch (e) { console.error("localStorage unavailable"); }
-                    }
-                }).catch(error => {
-                    console.error("Failed to send notification:", error);
-                });
+                 if (!alreadySent) {
+                    sendMaintenanceReminder(
+                        "user-123", // Replace with actual user ID
+                        `${log.taskType} is due ${daysUntil === 0 ? 'today' : 'tomorrow'} (${safeFormatDate(dueDate, "PPP")})`
+                    ).then(notification => {
+                        if (notification) {
+                            toast({
+                                title: "Maintenance Reminder",
+                                description: notification.message,
+                                variant: "default",
+                            });
+                            try {
+                                 localStorage.setItem(notificationKey, 'true');
+                            } catch (e) { console.error("localStorage unavailable"); }
+                        }
+                    }).catch(error => {
+                        console.error("Failed to send notification:", error);
+                    });
+                }
             }
         }
     });
@@ -207,7 +213,8 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
            <TableHead><Skeleton className="h-5 w-20" /></TableHead>
            <TableHead><Skeleton className="h-5 w-24" /></TableHead>
            <TableHead><Skeleton className="h-5 w-32" /></TableHead>
-           <TableHead className="text-right"><Skeleton className="h-5 w-16" /></TableHead>
+            <TableHead><Skeleton className="h-5 w-40" /></TableHead> {/* Added for notes */}
+           <TableHead className="text-right"><Skeleton className="h-5 w-24" /></TableHead> {/* Adjusted for actions */}
          </TableRow>
        </TableHeader>
        <TableBody>
@@ -216,7 +223,8 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
              <TableCell><Skeleton className="h-5 w-full" /></TableCell>
              <TableCell><Skeleton className="h-5 w-full" /></TableCell>
              <TableCell><Skeleton className="h-5 w-full" /></TableCell>
-             <TableCell className="text-right"><Skeleton className="h-8 w-8 inline-block" /></TableCell>
+             <TableCell><Skeleton className="h-5 w-full" /></TableCell>
+             <TableCell className="text-right"><Skeleton className="h-8 w-20 inline-block" /></TableCell>{/* Adjusted width */}
            </TableRow>
          ))}
        </TableBody>
@@ -235,6 +243,8 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                 <CardContent>
                     <Skeleton className="h-10 w-full mb-4" />
                     <TableSkeleton />
+                     <Skeleton className="h-10 w-full mt-4" />
+                     <TableSkeleton />
                 </CardContent>
             </Card>
         )
@@ -242,6 +252,7 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
 
 
   return (
+    <TooltipProvider> {/* Wrap with TooltipProvider */}
     <div className="space-y-8">
       {/* Upcoming Maintenance Section */}
        <Card>
@@ -255,10 +266,11 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                     <Table>
                         <TableHeader>
                         <TableRow>
-                            <TableHead>Task</TableHead>
-                            <TableHead>Due Date</TableHead>
-                            <TableHead>Status</TableHead>
-                            <TableHead className="text-right">Actions</TableHead>
+                            <TableHead className="w-[150px]">Task</TableHead>
+                            <TableHead className="w-[120px]">Due Date</TableHead>
+                             <TableHead>Status</TableHead>
+                             <TableHead className="w-[150px]">Notes</TableHead> {/* Added Notes */}
+                            <TableHead className="text-right w-[100px]">Actions</TableHead>
                         </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -278,26 +290,61 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                                     <TableCell>{safeFormatDate(validNextServiceDue, "PPP")}</TableCell>
                                     {/* Pass validated date to badge generator */}
                                     <TableCell>{getReminderBadge(validNextServiceDue)}</TableCell>
+                                     <TableCell>
+                                         <Tooltip delayDuration={100}>
+                                             <TooltipTrigger asChild>
+                                                 <span className="block max-w-[150px] truncate cursor-help">
+                                                     {log.notes || <span className="text-muted-foreground italic">N/A</span>}
+                                                 </span>
+                                             </TooltipTrigger>
+                                             {log.notes && (
+                                                 <TooltipContent side="top" align="start" className="max-w-xs">
+                                                     <p>{log.notes}</p>
+                                                 </TooltipContent>
+                                             )}
+                                         </Tooltip>
+                                     </TableCell>
                                      <TableCell className="text-right">
+                                         {/* Edit Button */}
+                                         <Tooltip delayDuration={100}>
+                                             <TooltipTrigger asChild>
+                                                 <Button variant="ghost" size="icon" className="text-primary hover:text-primary/80 mr-1" aria-label={`Edit log for ${log.taskType}`} onClick={() => editLog(log)}>
+                                                     <Pencil className="h-4 w-4" />
+                                                     <span className="sr-only">Edit Log</span>
+                                                 </Button>
+                                             </TooltipTrigger>
+                                             <TooltipContent side="top">
+                                                <p>Edit Log</p>
+                                             </TooltipContent>
+                                        </Tooltip>
+
+                                         {/* Delete Button with Dialog */}
                                          <AlertDialog>
                                             <AlertDialogTrigger asChild>
-                                                 <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/80" aria-label={`Delete upcoming log for ${log.taskType}`}>
-                                                    <Trash2 className="h-4 w-4" />
-                                                    <span className="sr-only">Delete Log</span>
-                                                </Button>
+                                                <Tooltip delayDuration={100}>
+                                                    <TooltipTrigger asChild>
+                                                        <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/80" aria-label={`Delete log for ${log.taskType}`}>
+                                                            <Trash2 className="h-4 w-4" />
+                                                            <span className="sr-only">Delete Log</span>
+                                                        </Button>
+                                                    </TooltipTrigger>
+                                                    <TooltipContent side="top">
+                                                        <p>Delete Log</p>
+                                                    </TooltipContent>
+                                                </Tooltip>
                                             </AlertDialogTrigger>
                                             <AlertDialogContent>
                                                 <AlertDialogHeader>
                                                 <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                                                 <AlertDialogDescription>
                                                     {/* Use safeFormatDate for display */}
-                                                    This action cannot be undone. This will permanently delete the upcoming reminder for "{log.taskType}" due on {safeFormatDate(validNextServiceDue, "PPP")}. The original log performed on {safeFormatDate(validDatePerformed, "PPP")} will remain in history (if applicable).
+                                                    This action cannot be undone. This will permanently delete the log for "{log.taskType}" (performed on {safeFormatDate(validDatePerformed, "PPP")}){validNextServiceDue ? ` including the upcoming reminder due on ${safeFormatDate(validNextServiceDue, "PPP")}` : ''}.
                                                 </AlertDialogDescription>
                                                 </AlertDialogHeader>
                                                 <AlertDialogFooter>
                                                 <AlertDialogCancel>Cancel</AlertDialogCancel>
                                                 <AlertDialogAction onClick={async () => await handleDelete(log.id, log.taskType)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                                    Delete Reminder
+                                                    Delete Log
                                                 </AlertDialogAction>
                                                 </AlertDialogFooter>
                                             </AlertDialogContent>
@@ -330,10 +377,10 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                 <TableCaption>A list of your recent bike maintenance logs.</TableCaption>
                 <TableHeader>
                     <TableRow>
-                    <TableHead>Task</TableHead>
-                    <TableHead>Date Performed</TableHead>
-                    <TableHead>Notes</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
+                        <TableHead className="w-[150px]">Task</TableHead>
+                        <TableHead className="w-[120px]">Performed On</TableHead>
+                        <TableHead>Notes</TableHead>
+                        <TableHead className="text-right w-[100px]">Actions</TableHead>
                     </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -341,6 +388,8 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                     const Icon = taskIcons[log.taskType] || Bike;
                      // Ensure datePerformed is valid Date before formatting
                      const validDatePerformed = log.datePerformed instanceof Date && isValid(log.datePerformed) ? log.datePerformed : undefined;
+                     const validNextServiceDue = log.nextServiceDue instanceof Date && isValid(log.nextServiceDue) ? log.nextServiceDue : undefined; // For delete description
+
                     return (
                         <TableRow key={log.id}>
                         <TableCell className="font-medium flex items-center gap-2">
@@ -349,14 +398,48 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                         </TableCell>
                         {/* Use safeFormatDate with validated date */}
                         <TableCell>{safeFormatDate(validDatePerformed, "PPP")}</TableCell>
-                        <TableCell className="max-w-xs truncate" title={log.notes}>{log.notes || "N/A"}</TableCell>
+                        <TableCell>
+                             <Tooltip delayDuration={100}>
+                                <TooltipTrigger asChild>
+                                    <span className="block max-w-[300px] xl:max-w-[400px] truncate cursor-help">
+                                        {log.notes || <span className="text-muted-foreground italic">N/A</span>}
+                                    </span>
+                                </TooltipTrigger>
+                                {log.notes && (
+                                    <TooltipContent side="top" align="start" className="max-w-xs">
+                                        <p>{log.notes}</p>
+                                    </TooltipContent>
+                                )}
+                             </Tooltip>
+                        </TableCell>
                         <TableCell className="text-right">
+                             {/* Edit Button */}
+                             <Tooltip delayDuration={100}>
+                                 <TooltipTrigger asChild>
+                                     <Button variant="ghost" size="icon" className="text-primary hover:text-primary/80 mr-1" aria-label={`Edit history log for ${log.taskType}`} onClick={() => editLog(log)}>
+                                         <Pencil className="h-4 w-4" />
+                                         <span className="sr-only">Edit Log</span>
+                                     </Button>
+                                 </TooltipTrigger>
+                                <TooltipContent side="top">
+                                     <p>Edit Log</p>
+                                </TooltipContent>
+                             </Tooltip>
+
+                             {/* Delete Button with Dialog */}
                             <AlertDialog>
                                 <AlertDialogTrigger asChild>
-                                     <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/80" aria-label={`Delete history log for ${log.taskType}`}>
-                                        <Trash2 className="h-4 w-4" />
-                                        <span className="sr-only">Delete Log</span>
-                                    </Button>
+                                    <Tooltip delayDuration={100}>
+                                         <TooltipTrigger asChild>
+                                            <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive/80" aria-label={`Delete history log for ${log.taskType}`}>
+                                                <Trash2 className="h-4 w-4" />
+                                                <span className="sr-only">Delete Log</span>
+                                            </Button>
+                                        </TooltipTrigger>
+                                         <TooltipContent side="top">
+                                             <p>Delete Log</p>
+                                         </TooltipContent>
+                                     </Tooltip>
                                 </AlertDialogTrigger>
                                 <AlertDialogContent>
                                     <AlertDialogHeader>
@@ -369,7 +452,7 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                                     <AlertDialogFooter>
                                     <AlertDialogCancel>Cancel</AlertDialogCancel>
                                     <AlertDialogAction onClick={async () => await handleDelete(log.id, log.taskType)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                        Delete
+                                        Delete Log
                                     </AlertDialogAction>
                                     </AlertDialogFooter>
                                 </AlertDialogContent>
@@ -388,5 +471,7 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
         </CardContent>
       </Card>
     </div>
+    </TooltipProvider>
   );
 }
+

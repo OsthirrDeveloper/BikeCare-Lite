@@ -10,7 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Separator } from "@/components/ui/separator";
 import { isValid, addDays } from "date-fns";
 // Import Firestore-based service functions
-import { subscribeToMaintenanceLogs, addMaintenanceLog, deleteMaintenanceLog, getInitialMaintenanceLogs } from "@/services/maintenanceService";
+import { subscribeToMaintenanceLogs, addMaintenanceLog, deleteMaintenanceLog, getInitialMaintenanceLogs, updateMaintenanceLog } from "@/services/maintenanceService";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -48,6 +48,7 @@ export default function Home() {
   const [maintenanceLogs, setMaintenanceLogs] = useState<MaintenanceLog[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isClient, setIsClient] = useState(false);
+  const [editingLog, setEditingLog] = useState<MaintenanceLog | null>(null); // State for editing
   const { toast } = useToast();
 
   // Fetch initial data and set up real-time listener (using Firestore service)
@@ -98,10 +99,10 @@ export default function Home() {
     };
   }, [toast]); // Add toast dependency
 
-  const handleAddLog = async (newLogData: Omit<MaintenanceLog, 'id'>) => {
-    // Basic date validation remains the same
-    if (!isValid(newLogData.datePerformed) || (newLogData.nextServiceDue && !isValid(newLogData.nextServiceDue))) {
-        console.error("Attempted to add log with invalid date:", newLogData);
+  const handleAddOrUpdateLog = async (logData: Omit<MaintenanceLog, 'id'>) => {
+    // Basic date validation
+    if (!isValid(logData.datePerformed) || (logData.nextServiceDue && !isValid(logData.nextServiceDue))) {
+        console.error("Attempted to add/update log with invalid date:", logData);
         toast({
             title: "Invalid Date",
             description: "Please ensure the dates entered are valid.",
@@ -111,14 +112,26 @@ export default function Home() {
     }
 
     try {
-      // Call Firestore add function
-      await addMaintenanceLog(USER_ID, newLogData);
-      // Listener handles state update, toast handled in form
+      if (editingLog) {
+        // Update existing log
+        await updateMaintenanceLog(USER_ID, editingLog.id, logData);
+        toast({
+            title: "Log Updated",
+            description: `Maintenance log for ${logData.taskType} updated successfully.`,
+            variant: "default",
+        });
+        setEditingLog(null); // Exit editing mode
+      } else {
+        // Add new log
+        await addMaintenanceLog(USER_ID, logData);
+        // Toast for add is handled in the form submission itself
+      }
+      // Listener handles state update for both add and update
     } catch (error) {
-      console.error("Failed to add log to Firestore:", error);
+      console.error(`Failed to ${editingLog ? 'update' : 'add'} log in Firestore:`, error);
       toast({
-        title: "Error Adding Log",
-        description: "Could not save the maintenance log to the database.",
+        title: `Error ${editingLog ? 'Updating' : 'Adding'} Log`,
+        description: `Could not save the maintenance log to the database.`,
         variant: "destructive",
       });
     }
@@ -135,7 +148,7 @@ export default function Home() {
          toast({
             title: "Log Deleted",
             description: `Maintenance log for ${taskType} deleted successfully.`,
-            variant: "destructive"
+            variant: "destructive" // Consistent destructive variant for delete
          });
      } catch (error) {
          console.error("Failed to delete log from Firestore:", error);
@@ -146,6 +159,18 @@ export default function Home() {
          });
      }
    };
+
+   // Function to initiate editing
+    const handleEditLog = (log: MaintenanceLog) => {
+        setEditingLog(log);
+        // Optionally scroll to the form or highlight it
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+     // Function to cancel editing
+    const handleCancelEdit = () => {
+        setEditingLog(null);
+    };
 
    // Loading State UI (remains the same)
    const LoadingSkeleton = () => (
@@ -164,14 +189,26 @@ export default function Home() {
          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
            {/* Log Form Section */}
            <div className="lg:col-span-1">
-             <Card className="shadow-md">
+             <Card className="shadow-md relative"> {/* Added relative positioning */}
+                 {/* Show overlay when editing */}
+                {editingLog && (
+                  <div className="absolute inset-0 bg-primary/10 dark:bg-primary/20 backdrop-blur-sm z-10 rounded-lg pointer-events-none"></div>
+                 )}
                 <CardHeader>
-                    <CardTitle>Log New Maintenance</CardTitle>
-                    <CardDescription>Record a bike maintenance task you've performed.</CardDescription>
+                    {/* Dynamic title based on editing state */}
+                    <CardTitle>{editingLog ? `Edit Maintenance Log` : 'Log New Maintenance'}</CardTitle>
+                    <CardDescription>{editingLog ? `Update the details for the task performed on ${isValid(editingLog.datePerformed) ? editingLog.datePerformed.toLocaleDateString() : 'N/A'}.` : 'Record a bike maintenance task you\'ve performed.'}</CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="relative z-20"> {/* Ensure form is above overlay */}
                     {/* Render form only on the client */}
-                    {isClient ? <MaintenanceLogForm addLog={handleAddLog} /> : <Skeleton className="h-96 w-full" /> /* Form skeleton */}
+                    {isClient ? (
+                        <MaintenanceLogForm
+                            onSubmitLog={handleAddOrUpdateLog} // Renamed prop for clarity
+                            initialData={editingLog} // Pass editing log data to form
+                            onCancelEdit={handleCancelEdit} // Pass cancel handler
+                            isEditing={!!editingLog} // Pass editing status
+                        />
+                     ) : <Skeleton className="h-96 w-full" /> /* Form skeleton */}
                 </CardContent>
              </Card>
            </div>
@@ -182,8 +219,12 @@ export default function Home() {
               {!isClient || isLoading ? (
                  <LoadingSkeleton />
               ) : (
-                 // Pass Firestore logs and delete function
-                 <MaintenanceOverview logs={maintenanceLogs} deleteLog={handleDeleteLog}/>
+                 // Pass Firestore logs, delete, and edit handlers
+                 <MaintenanceOverview
+                    logs={maintenanceLogs}
+                    deleteLog={handleDeleteLog}
+                    editLog={handleEditLog} // Pass edit handler
+                  />
               )}
            </div>
          </div>
