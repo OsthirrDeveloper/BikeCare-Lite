@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
@@ -14,7 +15,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { format, differenceInDays, isFuture, isPast, parseISO } from "date-fns";
+import { format, differenceInDays, isFuture, isPast, isValid } from "date-fns";
 import { Droplet, Gauge, Wrench, CircleCheck, Wind, Bike, AlertTriangle, CheckCircle2, CalendarClock, Trash2 } from "lucide-react";
 import { sendMaintenanceReminder } from "@/services/notification";
 import { useToast } from "@/hooks/use-toast";
@@ -46,22 +47,33 @@ const taskIcons: { [key in MaintenanceLog["taskType"]]: React.ElementType } = {
 };
 
 const getReminderBadge = (dueDate: Date | undefined): React.ReactNode => {
-    // Ensure dueDate is a Date object if it exists
-    const validDueDate = dueDate ? (typeof dueDate === 'string' ? parseISO(dueDate) : dueDate) : undefined;
-
-    if (!validDueDate || !isFuture(validDueDate)) {
-        return null; // No badge if no due date or if it's in the past
+    // Ensure dueDate is a valid Date object if it exists
+    if (!dueDate || !isValid(dueDate)) {
+        return null; // No badge if no due date or it's invalid
     }
 
-    const daysUntilDue = differenceInDays(validDueDate, new Date());
+    if (!isFuture(dueDate)) {
+        return null; // No badge if it's in the past
+    }
+
+    const daysUntilDue = differenceInDays(dueDate, new Date());
 
     if (daysUntilDue <= 0) {
-        return <Badge variant="destructive" className="ml-2 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Due Today / Overdue</Badge>;
+        // Should ideally be caught by isFuture, but handles same-day case
+        return <Badge variant="destructive" className="ml-2 flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Due Today</Badge>;
     } else if (daysUntilDue <= 7) {
         return <Badge variant="outline" className="ml-2 flex items-center gap-1 bg-accent text-accent-foreground"><CalendarClock className="h-3 w-3" /> Due in {daysUntilDue} day{daysUntilDue > 1 ? 's' : ''}</Badge>;
     } else {
         return <Badge variant="secondary" className="ml-2 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Due in {daysUntilDue} days</Badge>;
     }
+};
+
+// Helper function to safely format dates
+const safeFormatDate = (date: Date | undefined, formatString: string): string => {
+  if (date && isValid(date)) {
+    return format(date, formatString);
+  }
+  return "Invalid Date";
 };
 
 export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProps) {
@@ -78,17 +90,25 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
    useEffect(() => {
      if (!currentTime) return; // Don't run sorting/filtering until currentTime is set
 
-    const sortedLogs = [...logs].sort(
-      (a, b) => new Date(b.datePerformed).getTime() - new Date(a.datePerformed).getTime()
+    // Ensure logs have valid Date objects before processing
+    const validLogs = logs.map(log => ({
+        ...log,
+        datePerformed: new Date(log.datePerformed), // Ensure it's a Date object
+        nextServiceDue: log.nextServiceDue ? new Date(log.nextServiceDue) : undefined, // Ensure it's Date or undefined
+    })).filter(log => isValid(log.datePerformed)); // Filter out logs with invalid datePerformed
+
+
+    const sortedLogs = [...validLogs].sort(
+      (a, b) => b.datePerformed.getTime() - a.datePerformed.getTime() // Sort directly using Date objects
     );
 
     const upcoming = sortedLogs.filter(
-      (log) => log.nextServiceDue && isFuture(parseISO(log.nextServiceDue.toString()))
-    ).sort((a, b) => new Date(a.nextServiceDue!).getTime() - new Date(b.nextServiceDue!).getTime());
+      (log) => log.nextServiceDue && isValid(log.nextServiceDue) && isFuture(log.nextServiceDue) // Check validity before isFuture
+    ).sort((a, b) => a.nextServiceDue!.getTime() - b.nextServiceDue!.getTime()); // Sort directly
 
 
     const past = sortedLogs.filter(
-       (log) => !log.nextServiceDue || isPast(parseISO(log.nextServiceDue.toString()))
+       (log) => !log.nextServiceDue || !isValid(log.nextServiceDue) || isPast(log.nextServiceDue) // Check validity before isPast
     );
 
 
@@ -97,27 +117,23 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
 
     // Check for due reminders on mount and when logs change
     upcoming.forEach(log => {
-        const dueDate = log.nextServiceDue ? parseISO(log.nextServiceDue.toString()) : undefined;
-        if (dueDate && differenceInDays(dueDate, currentTime) <= 1 && differenceInDays(dueDate, currentTime) >= 0 ) { // Due today or tomorrow
-            // Check if notification was already sent (e.g., using localStorage or a state variable)
-            // For simplicity, we'll just show a toast here. A real app might track sent notifications.
+        const dueDate = log.nextServiceDue;
+        if (dueDate && isValid(dueDate) && differenceInDays(dueDate, currentTime) <= 1 && differenceInDays(dueDate, currentTime) >= 0 ) { // Due today or tomorrow
              const notificationKey = `reminder_sent_${log.id}`;
              if (!localStorage.getItem(notificationKey)) {
                 sendMaintenanceReminder(
                     "user-123", // Replace with actual user ID in a real app
-                    `${log.taskType} is due on ${format(dueDate, "PPP")}`
+                    `${log.taskType} is due on ${safeFormatDate(dueDate, "PPP")}`
                 ).then(notification => {
                     toast({
                         title: "Maintenance Reminder",
                         description: notification.message,
                         variant: "default", // Use default or accent based on urgency
                     });
-                    // Mark notification as sent
                      try {
                         localStorage.setItem(notificationKey, 'true');
                     } catch (error) {
                         console.error("Failed to use localStorage:", error);
-                        // Handle cases where localStorage is not available or full
                     }
                 });
             }
@@ -171,15 +187,14 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                     <TableBody>
                     {upcomingReminders.map((log) => {
                         const Icon = taskIcons[log.taskType] || Bike;
-                        const dueDate = log.nextServiceDue ? parseISO(log.nextServiceDue.toString()) : undefined;
                         return (
                             <TableRow key={log.id}>
                                 <TableCell className="font-medium flex items-center gap-2">
                                 <Icon className="h-4 w-4 text-muted-foreground" />
                                 {log.taskType}
                                 </TableCell>
-                                <TableCell>{dueDate ? format(dueDate, "PPP") : "N/A"}</TableCell>
-                                <TableCell>{getReminderBadge(dueDate)}</TableCell>
+                                <TableCell>{safeFormatDate(log.nextServiceDue, "PPP")}</TableCell>
+                                <TableCell>{getReminderBadge(log.nextServiceDue)}</TableCell>
                                  <TableCell className="text-right">
                                      <AlertDialog>
                                         <AlertDialogTrigger asChild>
@@ -192,7 +207,7 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                                             <AlertDialogHeader>
                                             <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                                             <AlertDialogDescription>
-                                                This action cannot be undone. This will permanently delete the maintenance log for "{log.taskType}" performed on {format(parseISO(log.datePerformed.toString()), "PPP")}.
+                                                This action cannot be undone. This will permanently delete the maintenance log for "{log.taskType}" performed on {safeFormatDate(log.datePerformed, "PPP")}.
                                             </AlertDialogDescription>
                                             </AlertDialogHeader>
                                             <AlertDialogFooter>
@@ -234,14 +249,14 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
               <TableBody>
                 {pastLogs.map((log) => {
                   const Icon = taskIcons[log.taskType] || Bike;
-                   const datePerformed = parseISO(log.datePerformed.toString()); // Ensure date is parsed correctly
                   return (
                     <TableRow key={log.id}>
                       <TableCell className="font-medium flex items-center gap-2">
                         <Icon className="h-4 w-4 text-muted-foreground" />
                         {log.taskType}
                       </TableCell>
-                      <TableCell>{format(datePerformed, "PPP")}</TableCell>
+                      {/* Use safeFormatDate to prevent errors */}
+                      <TableCell>{safeFormatDate(log.datePerformed, "PPP")}</TableCell>
                       <TableCell>{log.notes || "N/A"}</TableCell>
                       <TableCell className="text-right">
                          <AlertDialog>
@@ -255,7 +270,7 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
                                 <AlertDialogHeader>
                                 <AlertDialogTitle>Are you sure?</AlertDialogTitle>
                                 <AlertDialogDescription>
-                                    This action cannot be undone. This will permanently delete the maintenance log for "{log.taskType}" performed on {format(datePerformed, "PPP")}.
+                                    This action cannot be undone. This will permanently delete the maintenance log for "{log.taskType}" performed on {safeFormatDate(log.datePerformed, "PPP")}.
                                 </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
@@ -280,3 +295,5 @@ export function MaintenanceOverview({ logs, deleteLog }: MaintenanceOverviewProp
     </div>
   );
 }
+
+    
